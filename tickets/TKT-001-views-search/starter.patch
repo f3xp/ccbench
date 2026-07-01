@@ -1,0 +1,44 @@
+diff --git a/native/axkit-playground/DeskUI/Features/ViewPicker/ViewModel/ViewsListBlockModel.swift b/native/axkit-playground/DeskUI/Features/ViewPicker/ViewModel/ViewsListBlockModel.swift
+index bc7731f..21dc0d2 100644
+--- a/native/axkit-playground/DeskUI/Features/ViewPicker/ViewModel/ViewsListBlockModel.swift
++++ b/native/axkit-playground/DeskUI/Features/ViewPicker/ViewModel/ViewsListBlockModel.swift
+@@ -61,36 +61,9 @@ final class AXDViewsListBlockModel: AXBlockModel<
+             handleOutput(.selectedView(view))
+             return Just(state).eraseToAnyPublisher()
+ 
+-        case .searchTextChanged(let query):
+-            guard !query.isEmpty else {
+-                // Reset to full list
+-                if allSections.flatMap(\.views).isEmpty {
+-                    return Just(state).eraseToAnyPublisher()
+-                }
+-                return Just(.loaded(AXDViewsListData(
+-                    sections: allSections,
+-                    selectedViewId: props.selectedViewId
+-                ))).eraseToAnyPublisher()
+-            }
+-
+-            let lowered = query.lowercased()
+-            let filtered = allSections.compactMap { section -> AXDViewSection? in
+-                let matchingViews = section.views.filter { $0.name.lowercased().contains(lowered) }
+-                return matchingViews.isEmpty ? nil : AXDViewSection(name: section.name, views: matchingViews)
+-            }
+-
+-            if filtered.isEmpty {
+-                return Just(.empty(AXEmptyData(
+-                    title: "No Results",
+-                    subTitle: "No views match \"\(query)\".",
+-                    icon: "magnifyingglass"
+-                ))).eraseToAnyPublisher()
+-            }
+-
+-            return Just(.loaded(AXDViewsListData(
+-                sections: filtered,
+-                selectedViewId: props.selectedViewId
+-            ))).eraseToAnyPublisher()
++        case .searchTextChanged:
++            // TODO(TKT-001): implement client-side search per the PRD.
++            return Just(state).eraseToAnyPublisher()
+         }
+     }
+ }

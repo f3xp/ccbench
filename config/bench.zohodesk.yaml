@@ -1,0 +1,100 @@
+# axbench central configuration.
+# Everything tunable lives here so runs are reproducible and auditable.
+
+# ---- Models (pinned, not aliases, so the benchmark is reproducible) ----
+models:
+  # Agent under test / baseline agent. `opus` alias resolves to the latest Opus
+  # (Opus 4.8) at run time; we record the resolved id into each cell.json.
+  agent: opus
+  agent_effort: high            # --effort for the agent sessions
+  # Judges must be pinned to an exact id and run at deterministic settings.
+  judge: claude-opus-4-8
+  judge_effort: low
+
+# ---- Run shape ----
+runs_per_cell: 3                # n runs per (ticket x arm)
+arms:
+  - axkit-flow                  # Arm A: multi-session handoff
+  - baseline                    # Arm B: vanilla single session
+
+# ---- Budgets / guards (hard stops, read from CLI JSON cost field) ----
+# ZohoDeskiOS is heavy: pod install + full app build is minutes per cell.
+budgets:
+  max_cost_usd_per_stage: 8.0
+  max_cost_usd_per_run: 40.0
+  max_stages: 12                # safety cap on the handoff loop
+  stage_timeout_s: 2400         # per fresh-session subprocess (pod install + build)
+  baseline_timeout_s: 3600      # single baseline session
+  pod_install_timeout_s: 1800
+  build_timeout_s: 3600
+
+# ---- iOS toolchain (ZohoDeskiOS, CocoaPods workspace) ----
+ios:
+  # All paths relative to the worktree root.
+  build_root_rel: native/application/ZohoDesk
+  workspace_rel: native/application/ZohoDesk/ZohoDesk.xcworkspace
+  project_rel: native/application/ZohoDesk/ZohoDesk.xcodeproj
+  app_scheme: ZohoDesk
+  unit_target: ZohoDeskUnitTests
+  uitest_target: ZohoDeskUITests
+  # SwiftLint runs as an app build phase; standalone config (best-effort path).
+  swiftlint_config_rel: native/application/ZohoDesk/.swiftlint.yml
+  # CocoaPods: install per worktree before building.
+  podinstall: true
+  setup_script_rel: native/application/ZohoDesk/setup.sh
+  # Pinned simulator destination for build+test reproducibility.
+  destination: "platform=iOS Simulator,name=iPhone 17,OS=latest"
+  simulator_name: "iPhone 17"
+  # Ruby env that can load the `xcodeproj` gem (bundled with Homebrew CocoaPods).
+  xcodeproj_gem_home: /opt/homebrew/opt/cocoapods/libexec
+  ruby_bin: /opt/homebrew/opt/ruby/bin/ruby
+
+# ---- Sources ----
+sources:
+  # The app under test. Benchmark worktrees are created off `base_ref`.
+  # master = PRODUCTION: the harness never commits or pushes to origin.
+  target_repo: /Users/goutham-21963/Developer/ZohoDeskiOS
+  base_ref: master
+  push_guard: true              # remove origin push URL in every worktree
+  # axkit-flow checkout that Arm A loads by path. We pin + record its SHA.
+  axkit_flow_repo: /Users/goutham-21963/Developer/axkit-flow
+  axkit_flow_branch: multi-session-handoff-ios
+
+# ---- Claude Code invocation policy ----
+claude:
+  bin: claude
+  allowed_tools:
+    - Read
+    - Glob
+    - Grep
+    - Edit
+    - Write
+    - "Bash(git:*)"
+    - "Bash(xcodebuild:*)"
+    - "Bash(swiftlint:*)"
+    - "Bash(xcrun:*)"
+    - "Bash(mkdir:*)"
+    - "Bash(ls:*)"
+    - "Bash(cat:*)"
+    - TodoWrite
+    - Task
+  disallowed_tools:
+    - WebFetch
+    - WebSearch
+  permission_mode: bypassPermissions
+
+# ---- Handoff flow definition (the 9 stages under test) ----
+# Used to validate advance-correctness and recognise the terminal stage.
+handoff:
+  stages:
+    - research
+    - unit-testcase-plan
+    - plan
+    - subagent-dev
+    - refine
+    - master-testcase-writer
+    - uitest
+    - review-guide
+    - code-review
+  terminal_stage: code-review
+  artifact_root: .axkit/features   # under the worktree

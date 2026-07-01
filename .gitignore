@@ -1,0 +1,10 @@
+.build/
+.venv/
+.scratch/
+sandbox/
+results/
+__pycache__/
+*.pyc
+DerivedData/
+*.xcresult
+.claude/

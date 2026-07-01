@@ -1,0 +1,691 @@
+diff --git a/native/axkit-playground/DeskUI/Features/ProjectTaskList/ViewModel/ProjectTaskListBlockModel.swift b/native/axkit-playground/DeskUI/Features/ProjectTaskList/ViewModel/ProjectTaskListBlockModel.swift
+index 6813cb9..a4bd84b 100644
+--- a/native/axkit-playground/DeskUI/Features/ProjectTaskList/ViewModel/ProjectTaskListBlockModel.swift
++++ b/native/axkit-playground/DeskUI/Features/ProjectTaskList/ViewModel/ProjectTaskListBlockModel.swift
+@@ -32,137 +32,22 @@ final class AXPTaskListBlockModel: AXBlockModel<
+     override func handleIntent(_ intent: AXPTaskListIntent)
+         -> AnyPublisher<AXPTaskListState, Never> {
+ 
+-        logger.info("handleIntent: \(String(describing: intent))")
+-
++        // TODO(ZP-001): implement the task-list state machine per the PRD.
++        // Handle every intent — initialLoad / refresh / loadMore / taskSelected /
++        // checkboxToggled / createTaskTapped — using `dataSource` and emitting the
++        // appropriate outputs. This stub leaves the state unchanged.
+         switch intent {
+         case .initialLoad:
+-            logger.debug("Fetching tasks — initialLoad, pageSize=\(Self.pageSize)")
+-            return dataSource.fetchTasks(props: props, from: 0, limit: Self.pageSize)
+-                .handleEvents(
+-                    receiveOutput: { page in
+-                        logger.info("fetchTasks returned \(page.tasks.count) tasks, hasMore=\(page.hasMore)")
+-                    },
+-                    receiveCompletion: { completion in
+-                        if case .failure(let error) = completion {
+-                            logger.error("fetchTasks failed: \(error.localizedDescription)")
+-                        }
+-                    }
+-                )
+-                .map { page in
+-                    let newState: AXPTaskListState = page.tasks.isEmpty
+-                        ? .empty
+-                        : .loaded(AXPTaskListData(
+-                            tasks: page.tasks,
+-                            hasMore: page.hasMore,
+-                            nextFrom: page.tasks.count
+-                        ))
+-                    logger.info("State transition → \(String(describing: newState))")
+-                    return newState
+-                }
+-                .replaceError(with: .error("Failed to load tasks. Please try again."))
+-                .eraseToAnyPublisher()
+-
++            return Just(state).eraseToAnyPublisher()
+         case .refresh:
+-            logger.debug("Fetching tasks — refresh (from: 0), pageSize=\(Self.pageSize)")
+-
+-            // Capture the current loaded data so we can preserve it during the fetch.
+-            let existingData: AXPTaskListData? = {
+-                if case .loaded(let data) = state { return data }
+-                return nil
+-            }()
+-
+-            // On error, fall back to the existing loaded state if available,
+-            // otherwise transition to the generic error state.
+-            let errorFallback: AXPTaskListState = existingData.map { .loaded($0) }
+-                ?? .error("Failed to load tasks. Please try again.")
+-
+-            return dataSource.fetchTasks(props: props, from: 0, limit: Self.pageSize)
+-                .handleEvents(
+-                    receiveOutput: { page in
+-                        logger.info("refresh: fetchTasks returned \(page.tasks.count) tasks, hasMore=\(page.hasMore)")
+-                    },
+-                    receiveCompletion: { completion in
+-                        if case .failure(let error) = completion {
+-                            logger.error("refresh: fetchTasks failed: \(error.localizedDescription)")
+-                        }
+-                    }
+-                )
+-                .map { page in
+-                    let newState: AXPTaskListState = page.tasks.isEmpty
+-                        ? .empty
+-                        : .loaded(AXPTaskListData(
+-                            tasks: page.tasks,
+-                            hasMore: page.hasMore,
+-                            nextFrom: page.tasks.count
+-                        ))
+-                    logger.info("refresh: State transition → \(String(describing: newState))")
+-                    return newState
+-                }
+-                .replaceError(with: errorFallback)
+-                .eraseToAnyPublisher()
+-
++            return Just(state).eraseToAnyPublisher()
+         case .loadMore:
+-            guard case .loaded(let data) = state,
+-                  data.hasMore,
+-                  !data.isLoadingMore else {
+-                logger.debug("loadMore skipped — current state=\(String(describing: self.state))")
+-                return Just(state).eraseToAnyPublisher()
+-            }
+-
+-            logger.debug("loadMore starting from offset=\(data.nextFrom)")
+-
+-            let loadingState = AXPTaskListData(
+-                tasks: data.tasks,
+-                hasMore: data.hasMore,
+-                isLoadingMore: true,
+-                nextFrom: data.nextFrom
+-            )
+-
+-            return Just(AXPTaskListState.loaded(loadingState))
+-                .append(
+-                    dataSource.fetchTasks(props: props, from: data.nextFrom, limit: Self.pageSize)
+-                        .map { page in
+-                            .loaded(AXPTaskListData(
+-                                tasks: data.tasks + page.tasks,
+-                                hasMore: page.hasMore,
+-                                nextFrom: data.nextFrom + page.tasks.count
+-                            ))
+-                        }
+-                        .replaceError(with: .loaded(data))
+-                )
+-                .eraseToAnyPublisher()
+-
+-        case .taskSelected(let task):
+-            logger.debug("taskSelected: id=\(task.id), title=\(task.title)")
+-            handleOutput(.taskSelected(task))
+             return Just(state).eraseToAnyPublisher()
+-
+-        case .checkboxToggled(let task):
+-            guard case .loaded(let data) = state else {
+-                logger.warning("checkboxToggled ignored — state is not .loaded")
+-                return Just(state).eraseToAnyPublisher()
+-            }
+-            let newStatus: AXPTaskStatus = task.status.kind == .closed
+-                ? AXPTaskStatus(kind: .open, id: task.status.id, name: "Open", colorHex: task.status.colorHex)
+-                : AXPTaskStatus(kind: .closed, id: task.status.id, name: "Closed", colorHex: task.status.colorHex)
+-            logger.debug("checkboxToggled: id=\(task.id), newStatus=\(String(describing: newStatus))")
+-            return dataSource.updateTaskStatus(id: task.id, status: newStatus)
+-                .map { [weak self] updatedTask -> AXPTaskListState in
+-                    guard let self else { return .loaded(data) }
+-                    self.handleOutput(.taskStatusChanged(updatedTask))
+-                    let updatedTasks = data.tasks.map { $0.id == updatedTask.id ? updatedTask : $0 }
+-                    return .loaded(AXPTaskListData(
+-                        tasks: updatedTasks,
+-                        hasMore: data.hasMore,
+-                        nextFrom: data.nextFrom
+-                    ))
+-                }
+-                .replaceError(with: .loaded(data))
+-                .eraseToAnyPublisher()
+-
++        case .taskSelected:
++            return Just(state).eraseToAnyPublisher()
++        case .checkboxToggled:
++            return Just(state).eraseToAnyPublisher()
+         case .createTaskTapped:
+-            logger.debug("createTaskTapped")
+-            handleOutput(.createTaskRequested)
+             return Just(state).eraseToAnyPublisher()
+         }
+     }
+diff --git a/native/axkit-playgroundTests/TestCase/ProjectTaskList/ProjectTaskListBlockModelTests.swift b/native/axkit-playgroundTests/TestCase/ProjectTaskList/ProjectTaskListBlockModelTests.swift
+deleted file mode 100644
+index ae82f92..0000000
+--- a/native/axkit-playgroundTests/TestCase/ProjectTaskList/ProjectTaskListBlockModelTests.swift
++++ /dev/null
+@@ -1,533 +0,0 @@
+-import Foundation
+-import Testing
+-@preconcurrency import Combine
+-import AXKitCore
+-@testable import axkit_playground
+-
+-// MARK: - Mock DataSource
+-
+-private final class MockTaskListDataSource: AXPTaskListDataSource, @unchecked Sendable {
+-
+-    var fetchResult: AnyPublisher<AXPTaskListPage, Error> = Just(AXPTaskListPage(tasks: [], hasMore: false))
+-        .setFailureType(to: Error.self)
+-        .eraseToAnyPublisher()
+-
+-    var updateResult: AnyPublisher<AXPTask, Error>?
+-
+-    private(set) var fetchCallCount = 0
+-    private(set) var lastFetchFrom: Int?
+-    private(set) var updateCallCount = 0
+-    private(set) var lastUpdateId: String?
+-    private(set) var lastUpdateStatus: AXPTaskStatus?
+-
+-    func fetchTasks(props: AXPTaskListProps, from: Int, limit: Int) -> AnyPublisher<AXPTaskListPage, Error> {
+-        fetchCallCount += 1
+-        lastFetchFrom = from
+-        return fetchResult
+-    }
+-
+-    func updateTaskStatus(id: String, status: AXPTaskStatus) -> AnyPublisher<AXPTask, Error> {
+-        updateCallCount += 1
+-        lastUpdateId = id
+-        lastUpdateStatus = status
+-        if let result = updateResult {
+-            return result
+-        }
+-        let updated = AXPTask(id: id, title: "Updated", status: status)
+-        return Just(updated)
+-            .setFailureType(to: Error.self)
+-            .eraseToAnyPublisher()
+-    }
+-}
+-
+-// MARK: - Test Fixtures
+-
+-private let sampleTask1 = AXPTask(
+-    id: "t1",
+-    title: "Task One",
+-    status: AXPTaskStatus(kind: .open, id: "s1", name: "Open", colorHex: "#1abc9c"),
+-    tags: [AXPTaskTag(id: "tag1", name: "iOS", colorHex: "#3498db")],
+-    completionPercentage: 10,
+-    owners: [AXPTaskOwner(name: "Alice Smith", zuid: 100, zpuid: "zp100")]
+-)
+-private let sampleTask2 = AXPTask(
+-    id: "t2",
+-    title: "Task Two",
+-    status: AXPTaskStatus(kind: .inProgress, id: "s2", name: "In Progress", colorHex: "#f1c40f"),
+-    tags: [AXPTaskTag(id: "tag2", name: "Design", colorHex: "#9b59b6")],
+-    completionPercentage: 50,
+-    owners: [AXPTaskOwner(name: "Bob Jones", zuid: 101, zpuid: "zp101")]
+-)
+-private let sampleTask3 = AXPTask(
+-    id: "t3",
+-    title: "Task Three",
+-    status: AXPTaskStatus(kind: .closed, id: "s3", name: "Closed", colorHex: "#e74c3c"),
+-    tags: [],
+-    completionPercentage: 100,
+-    owners: []
+-)
+-private let sampleTasks = [sampleTask1, sampleTask2, sampleTask3]
+-
+-// MARK: - Tests
+-
+-@Suite("AXPTaskListBlockModel")
+-@MainActor
+-struct ProjectTaskListBlockModelTests {
+-
+-    // MARK: - Factory
+-
+-    private func makeSUT(
+-        dataSource: MockTaskListDataSource = MockTaskListDataSource(),
+-        props: AXPTaskListProps = AXPTaskListProps(portalId: "portal1", projectId: "proj1")
+-    ) -> (model: AXPTaskListBlockModel, outputs: OutputCapture<AXPTaskListOutput>, dataSource: MockTaskListDataSource) {
+-        let outputs = OutputCapture<AXPTaskListOutput>()
+-        let communicator = AXCommunicator<AXPTaskListIntent, AXPTaskListOutput> { output in
+-            outputs.append(output)
+-        }
+-        let model = AXPTaskListBlockModel(
+-            props: props,
+-            state: .loading,
+-            communicator: communicator,
+-            dataSource: dataSource
+-        )
+-        return (model, outputs, dataSource)
+-    }
+-
+-    private func makeLoadedSUT(tasks: [AXPTask] = sampleTasks) -> (model: AXPTaskListBlockModel, outputs: OutputCapture<AXPTaskListOutput>, dataSource: MockTaskListDataSource) {
+-        let ds = MockTaskListDataSource()
+-        ds.fetchResult = Just(AXPTaskListPage(tasks: tasks, hasMore: false))
+-            .setFailureType(to: Error.self)
+-            .eraseToAnyPublisher()
+-        return makeSUT(dataSource: ds)
+-    }
+-
+-    // MARK: - Initial State
+-
+-    @Test func initialState_isLoading() {
+-        let (model, _, _) = makeSUT()
+-        guard case .loading = model.state else {
+-            Issue.record("Expected .loading, got \(model.state)")
+-            return
+-        }
+-    }
+-
+-    // MARK: - initialLoad: Success
+-
+-    @Test func initialLoad_withTasks_setsLoadedState() async {
+-        let ds = MockTaskListDataSource()
+-        ds.fetchResult = Just(AXPTaskListPage(tasks: sampleTasks, hasMore: false))
+-            .setFailureType(to: Error.self)
+-            .eraseToAnyPublisher()
+-        let (model, _, _) = makeSUT(dataSource: ds)
+-
+-        await dispatchAndAwaitState(model, intent: .initialLoad) { state in
+-            if case .loaded = state { return true }
+-            return false
+-        }
+-
+-        guard case .loaded(let data) = model.state else {
+-            Issue.record("Expected .loaded, got \(model.state)")
+-            return
+-        }
+-        #expect(data.tasks.count == 3)
+-        #expect(data.tasks[0].id == "t1")
+-    }
+-
+-    @Test func initialLoad_withEmptyResponse_setsEmptyState() async {
+-        let ds = MockTaskListDataSource()
+-        ds.fetchResult = Just(AXPTaskListPage(tasks: [], hasMore: false))
+-            .setFailureType(to: Error.self)
+-            .eraseToAnyPublisher()
+-        let (model, _, _) = makeSUT(dataSource: ds)
+-
+-        await dispatchAndAwaitState(model, intent: .initialLoad) { state in
+-            if case .empty = state { return true }
+-            return false
+-        }
+-
+-        guard case .empty = model.state else {
+-            Issue.record("Expected .empty, got \(model.state)")
+-            return
+-        }
+-    }
+-
+-    @Test func initialLoad_onError_setsErrorState() async {
+-        let ds = MockTaskListDataSource()
+-        ds.fetchResult = Fail(error: NSError(domain: "Test", code: -1))
+-            .eraseToAnyPublisher()
+-        let (model, _, _) = makeSUT(dataSource: ds)
+-
+-        await dispatchAndAwaitState(model, intent: .initialLoad) { state in
+-            if case .error = state { return true }
+-            return false
+-        }
+-
+-        guard case .error = model.state else {
+-            Issue.record("Expected .error, got \(model.state)")
+-            return
+-        }
+-    }
+-
+-    @Test func initialLoad_callsDataSourceOnce() async {
+-        let ds = MockTaskListDataSource()
+-        ds.fetchResult = Just(AXPTaskListPage(tasks: sampleTasks, hasMore: false))
+-            .setFailureType(to: Error.self)
+-            .eraseToAnyPublisher()
+-        let (model, _, _) = makeSUT(dataSource: ds)
+-
+-        await dispatchAndAwait(model, intent: .initialLoad)
+-
+-        #expect(ds.fetchCallCount == 1)
+-    }
+-
+-    // MARK: - refresh
+-
+-    @Test func refresh_fetchesFromOffset0() async {
+-        let ds = MockTaskListDataSource()
+-        ds.fetchResult = Just(AXPTaskListPage(tasks: sampleTasks, hasMore: false))
+-            .setFailureType(to: Error.self)
+-            .eraseToAnyPublisher()
+-        let (model, _, _) = makeSUT(dataSource: ds)
+-
+-        await dispatchAndAwaitState(model, intent: .refresh) { state in
+-            if case .loaded = state { return true }
+-            return false
+-        }
+-
+-        guard case .loaded(let data) = model.state else {
+-            Issue.record("Expected .loaded, got \(model.state)")
+-            return
+-        }
+-        #expect(data.tasks.count == 3)
+-        #expect(ds.fetchCallCount == 1)
+-        #expect(ds.lastFetchFrom == 0)
+-    }
+-
+-    @Test func refresh_replacesExistingTasks() async {
+-        let ds = MockTaskListDataSource()
+-        ds.fetchResult = Just(AXPTaskListPage(tasks: sampleTasks, hasMore: false))
+-            .setFailureType(to: Error.self)
+-            .eraseToAnyPublisher()
+-        let (model, _, _) = makeSUT(dataSource: ds)
+-
+-        await dispatchAndAwaitState(model, intent: .initialLoad) { state in
+-            if case .loaded = state { return true }
+-            return false
+-        }
+-
+-        let newTask = AXPTask(id: "new", title: "New Task", status: AXPTaskStatus(kind: .open))
+-        ds.fetchResult = Just(AXPTaskListPage(tasks: [newTask], hasMore: false))
+-            .setFailureType(to: Error.self)
+-            .eraseToAnyPublisher()
+-
+-        await dispatchAndAwaitState(model, intent: .refresh) { state in
+-            if case .loaded(let data) = state { return data.tasks.count == 1 }
+-            return false
+-        }
+-
+-        guard case .loaded(let data) = model.state else {
+-            Issue.record("Expected .loaded")
+-            return
+-        }
+-        #expect(data.tasks.count == 1)
+-        #expect(data.tasks[0].id == "new")
+-        #expect(ds.lastFetchFrom == 0)
+-    }
+-
+-    @Test func refresh_preservesLoadedStateWhileRefreshing() async {
+-        let ds = MockTaskListDataSource()
+-        ds.fetchResult = Just(AXPTaskListPage(tasks: sampleTasks, hasMore: false))
+-            .setFailureType(to: Error.self)
+-            .eraseToAnyPublisher()
+-        let (model, _, _) = makeSUT(dataSource: ds)
+-
+-        // First load
+-        await dispatchAndAwaitState(model, intent: .initialLoad) { state in
+-            if case .loaded = state { return true }
+-            return false
+-        }
+-
+-        // During refresh the state should remain .loaded (not .loading)
+-        guard case .loaded = model.state else {
+-            Issue.record("Expected .loaded before refresh")
+-            return
+-        }
+-
+-        let newTask = AXPTask(id: "refreshed", title: "Refreshed Task", status: AXPTaskStatus(kind: .open))
+-        ds.fetchResult = Just(AXPTaskListPage(tasks: [newTask], hasMore: false))
+-            .setFailureType(to: Error.self)
+-            .eraseToAnyPublisher()
+-
+-        // Dispatch refresh — the state should never transition to .loading
+-        await dispatchAndAwaitState(model, intent: .refresh) { state in
+-            if case .loaded(let data) = state { return data.tasks.count == 1 }
+-            return false
+-        }
+-
+-        guard case .loaded(let data) = model.state else {
+-            Issue.record("Expected .loaded after refresh")
+-            return
+-        }
+-        #expect(data.tasks[0].id == "refreshed")
+-    }
+-
+-    @Test func refresh_onError_keepsExistingData() async {
+-        let ds = MockTaskListDataSource()
+-        ds.fetchResult = Just(AXPTaskListPage(tasks: sampleTasks, hasMore: false))
+-            .setFailureType(to: Error.self)
+-            .eraseToAnyPublisher()
+-        let (model, _, _) = makeSUT(dataSource: ds)
+-
+-        // First load
+-        await dispatchAndAwaitState(model, intent: .initialLoad) { state in
+-            if case .loaded = state { return true }
+-            return false
+-        }
+-
+-        // Simulate refresh failure
+-        ds.fetchResult = Fail(error: NSError(domain: "Test", code: -1))
+-            .eraseToAnyPublisher()
+-
+-        await dispatchAndAwait(model, intent: .refresh)
+-
+-        // State should remain .loaded with the original tasks
+-        guard case .loaded(let data) = model.state else {
+-            Issue.record("Expected .loaded after failed refresh, got \(model.state)")
+-            return
+-        }
+-        #expect(data.tasks.count == 3)
+-        #expect(data.tasks[0].id == "t1")
+-    }
+-
+-    @Test func refresh_fromNonLoadedState_showsErrorOnFailure() async {
+-        let ds = MockTaskListDataSource()
+-        ds.fetchResult = Fail(error: NSError(domain: "Test", code: -1))
+-            .eraseToAnyPublisher()
+-        let (model, _, _) = makeSUT(dataSource: ds)
+-
+-        // State is .loading (initial), no existing loaded data
+-        await dispatchAndAwaitState(model, intent: .refresh) { state in
+-            if case .error = state { return true }
+-            return false
+-        }
+-
+-        guard case .error = model.state else {
+-            Issue.record("Expected .error when refresh fails with no existing data, got \(model.state)")
+-            return
+-        }
+-    }
+-
+-    // MARK: - loadMore
+-
+-    @Test func loadMore_appendsNextPage() async {
+-        let ds = MockTaskListDataSource()
+-        ds.fetchResult = Just(AXPTaskListPage(tasks: [sampleTask1, sampleTask2], hasMore: true))
+-            .setFailureType(to: Error.self)
+-            .eraseToAnyPublisher()
+-        let (model, _, _) = makeSUT(dataSource: ds)
+-
+-        await dispatchAndAwaitState(model, intent: .initialLoad) { state in
+-            if case .loaded = state { return true }
+-            return false
+-        }
+-
+-        ds.fetchResult = Just(AXPTaskListPage(tasks: [sampleTask3], hasMore: false))
+-            .setFailureType(to: Error.self)
+-            .eraseToAnyPublisher()
+-
+-        await dispatchAndAwaitState(model, intent: .loadMore) { state in
+-            if case .loaded(let data) = state { return data.tasks.count == 3 && !data.isLoadingMore }
+-            return false
+-        }
+-
+-        guard case .loaded(let data) = model.state else {
+-            Issue.record("Expected .loaded")
+-            return
+-        }
+-        #expect(data.tasks.count == 3)
+-        #expect(!data.hasMore)
+-    }
+-
+-    @Test func loadMore_whenAlreadyLoadingMore_doesNothing() async {
+-        let (model, _, ds) = makeLoadedSUT()
+-        await dispatchAndAwaitState(model, intent: .initialLoad) { state in
+-            if case .loaded = state { return true }
+-            return false
+-        }
+-
+-        // Manually set isLoadingMore via a state that has it true
+-        // We verify: dispatching loadMore when no hasMore does nothing
+-        await dispatchAndAwait(model, intent: .loadMore)
+-
+-        // No extra fetch should occur (hasMore is false)
+-        #expect(ds.fetchCallCount == 1)
+-    }
+-
+-    @Test func loadMore_whenNoMore_doesNothing() async {
+-        let (model, _, ds) = makeLoadedSUT()
+-        await dispatchAndAwaitState(model, intent: .initialLoad) { state in
+-            if case .loaded = state { return true }
+-            return false
+-        }
+-
+-        let callCountBefore = ds.fetchCallCount
+-        await dispatchAndAwait(model, intent: .loadMore)
+-
+-        #expect(ds.fetchCallCount == callCountBefore)
+-    }
+-
+-    @Test func loadMore_onError_restoresPreviousState() async {
+-        let ds = MockTaskListDataSource()
+-        ds.fetchResult = Just(AXPTaskListPage(tasks: sampleTasks, hasMore: true))
+-            .setFailureType(to: Error.self)
+-            .eraseToAnyPublisher()
+-        let (model, _, _) = makeSUT(dataSource: ds)
+-
+-        await dispatchAndAwaitState(model, intent: .initialLoad) { state in
+-            if case .loaded = state { return true }
+-            return false
+-        }
+-
+-        ds.fetchResult = Fail(error: NSError(domain: "Test", code: -1))
+-            .eraseToAnyPublisher()
+-
+-        await dispatchAndAwaitState(model, intent: .loadMore) { state in
+-            if case .loaded(let d) = state { return !d.isLoadingMore }
+-            return false
+-        }
+-
+-        guard case .loaded(let data) = model.state else {
+-            Issue.record("Expected .loaded")
+-            return
+-        }
+-        #expect(data.tasks.count == 3)
+-        #expect(data.hasMore)
+-    }
+-
+-    // MARK: - taskSelected
+-
+-    @Test func taskSelected_emitsOutput() async {
+-        let (model, outputs, _) = makeLoadedSUT()
+-        await dispatchAndAwaitState(model, intent: .initialLoad) { state in
+-            if case .loaded = state { return true }
+-            return false
+-        }
+-
+-        await dispatchAndAwait(model, intent: .taskSelected(sampleTask1))
+-
+-        #expect(outputs.values.count == 1)
+-        guard case .taskSelected(let task) = outputs.values.first else {
+-            Issue.record("Expected .taskSelected output")
+-            return
+-        }
+-        #expect(task.id == "t1")
+-    }
+-
+-    @Test func taskSelected_doesNotChangeState() async {
+-        let (model, _, _) = makeLoadedSUT()
+-        await dispatchAndAwaitState(model, intent: .initialLoad) { state in
+-            if case .loaded = state { return true }
+-            return false
+-        }
+-
+-        await dispatchAndAwait(model, intent: .taskSelected(sampleTask1))
+-
+-        guard case .loaded(let data) = model.state else {
+-            Issue.record("Expected state to remain .loaded")
+-            return
+-        }
+-        #expect(data.tasks.count == 3)
+-    }
+-
+-    // MARK: - checkboxToggled
+-
+-    @Test func checkboxToggled_openTask_setsClosedStatus() async {
+-        let (model, _, _) = makeLoadedSUT()
+-        await dispatchAndAwaitState(model, intent: .initialLoad) { state in
+-            if case .loaded = state { return true }
+-            return false
+-        }
+-
+-        await dispatchAndAwaitState(model, intent: .checkboxToggled(sampleTask1)) { state in
+-            if case .loaded(let data) = state {
+-                return data.tasks.first(where: { $0.id == "t1" })?.status.kind == .closed
+-            }
+-            return false
+-        }
+-
+-        guard case .loaded(let data) = model.state,
+-              let updated = data.tasks.first(where: { $0.id == "t1" }) else {
+-            Issue.record("Expected .loaded with updated task")
+-            return
+-        }
+-        #expect(updated.status.kind == .closed)
+-    }
+-
+-    @Test func checkboxToggled_closedTask_setsOpenStatus() async {
+-        let (model, _, _) = makeLoadedSUT()
+-        await dispatchAndAwaitState(model, intent: .initialLoad) { state in
+-            if case .loaded = state { return true }
+-            return false
+-        }
+-
+-        await dispatchAndAwaitState(model, intent: .checkboxToggled(sampleTask3)) { state in
+-            if case .loaded(let data) = state {
+-                return data.tasks.first(where: { $0.id == "t3" })?.status.kind == .open
+-            }
+-            return false
+-        }
+-
+-        guard case .loaded(let data) = model.state,
+-              let updated = data.tasks.first(where: { $0.id == "t3" }) else {
+-            Issue.record("Expected .loaded with updated task")
+-            return
+-        }
+-        #expect(updated.status.kind == .open)
+-    }
+-
+-    @Test func checkboxToggled_emitsTaskStatusChangedOutput() async {
+-        let (model, outputs, _) = makeLoadedSUT()
+-        await dispatchAndAwaitState(model, intent: .initialLoad) { state in
+-            if case .loaded = state { return true }
+-            return false
+-        }
+-
+-        await dispatchAndAwaitState(model, intent: .checkboxToggled(sampleTask1)) { state in
+-            if case .loaded = state { return true }
+-            return false
+-        }
+-
+-        #expect(outputs.values.count == 1)
+-        guard case .taskStatusChanged(let task) = outputs.values.first else {
+-            Issue.record("Expected .taskStatusChanged output")
+-            return
+-        }
+-        #expect(task.id == "t1")
+-        #expect(task.status.kind == .closed)
+-    }
+-
+-    @Test func checkboxToggled_onError_doesNotChangeState() async {
+-        let ds = MockTaskListDataSource()
+-        ds.fetchResult = Just(AXPTaskListPage(tasks: sampleTasks, hasMore: false))
+-            .setFailureType(to: Error.self)
+-            .eraseToAnyPublisher()
+-        ds.updateResult = Fail(error: NSError(domain: "Test", code: -1))
+-            .eraseToAnyPublisher()
+-        let (model, outputs, _) = makeSUT(dataSource: ds)
+-
+-        await dispatchAndAwaitState(model, intent: .initialLoad) { state in
+-            if case .loaded = state { return true }
+-            return false
+-        }
+-
+-        await dispatchAndAwait(model, intent: .checkboxToggled(sampleTask1))
+-
+-        guard case .loaded(let data) = model.state,
+-              let task = data.tasks.first(where: { $0.id == "t1" }) else {
+-            Issue.record("Expected state to remain .loaded")
+-            return
+-        }
+-        #expect(task.status.kind == .open)
+-        #expect(outputs.values.isEmpty)
+-    }
+-}

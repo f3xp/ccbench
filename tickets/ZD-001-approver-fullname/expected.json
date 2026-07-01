@@ -1,0 +1,12 @@
+{
+  "ticket_id": "ZD-001-approver-fullname",
+  "feature_slug": "approver-fullname",
+  "primary_file": "native/application/ZohoDesk/ZohoDesk/ZohoDeskBase/Approval/Domain/Entity/ZDApproval.swift",
+  "module": "ZohoDesk",
+  "required_symbols": ["fullName"],
+  "forbidden_symbols": ["ApproverNameFormatter", "static let shared"],
+  "unit_target": "ZohoDeskUnitTests",
+  "has_uitests": false,
+  "acceptance_criteria": ["AC-001", "AC-002", "AC-003", "AC-004"],
+  "notes": "Keep fullName a pure computed property on Approver; no singletons/global state."
+}

@@ -1,0 +1,19 @@
+diff --git a/native/application/ZohoDesk/ZohoDesk/ZohoDeskBase/Approval/Domain/Entity/ZDApproval.swift b/native/application/ZohoDesk/ZohoDesk/ZohoDeskBase/Approval/Domain/Entity/ZDApproval.swift
+index ff0e1be5d..198ee8799 100644
+--- a/native/application/ZohoDesk/ZohoDesk/ZohoDeskBase/Approval/Domain/Entity/ZDApproval.swift
++++ b/native/application/ZohoDesk/ZohoDesk/ZohoDeskBase/Approval/Domain/Entity/ZDApproval.swift
+@@ -32,12 +32,8 @@ public struct Approver {
+     var zuid: String?
+     
+     public var fullName: String {
+-        switch (firstName, lastName) {
+-            case (.some(let firstName), .some(let lastName)): return "\(firstName) \(lastName)".trimmingCharacters(in: .whitespaces)
+-            case (.none, .some(let lastName)): return lastName.trimmingCharacters(in: .whitespaces)
+-            case (.some(let firstName), .none): return firstName.trimmingCharacters(in: .whitespaces)
+-            case (.none, .none): return ""
+-        }
++        // TODO(ZD-001): implement per docs/features/ZD-001-approver-fullname_PRD.md
++        return ""
+     }
+     
+     mutating func setZuid(_ zuid: String?) {

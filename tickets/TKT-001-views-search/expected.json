@@ -1,0 +1,11 @@
+{
+  "ticket_id": "TKT-001-views-search",
+  "feature_slug": "views-list-search",
+  "primary_file": "native/axkit-playground/DeskUI/Features/ViewPicker/ViewModel/ViewsListBlockModel.swift",
+  "required_symbols": ["searchTextChanged"],
+  "forbidden_symbols": ["static let shared", "class ViewSearchManager"],
+  "unit_scheme": "axkit-playgroundTests",
+  "has_uitests": false,
+  "acceptance_criteria": ["AC-001", "AC-002", "AC-003", "AC-004", "E-001"],
+  "notes": "Filtering must stay inside the block model; no new global state."
+}

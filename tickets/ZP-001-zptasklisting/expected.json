@@ -1,0 +1,16 @@
+{
+  "ticket_id": "ZP-001-zptasklisting",
+  "feature_slug": "project-task-list",
+  "primary_file": "native/axkit-playground/DeskUI/Features/ProjectTaskList/ViewModel/ProjectTaskListBlockModel.swift",
+  "module": "axkit_playground",
+  "required_symbols": ["AXPTaskListBlockModel", "handleIntent"],
+  "forbidden_symbols": ["static let shared", "class .*Manager", "class .*Formatter"],
+  "unit_scheme": "axkit-playgroundTests",
+  "unit_target": "axkit-playgroundTests",
+  "has_uitests": false,
+  "acceptance_criteria": [
+    "AC-01","AC-02","AC-03","AC-04","AC-05","AC-06","AC-07",
+    "AC-08","AC-09","AC-10","AC-11","AC-12","AC-13","AC-14"
+  ],
+  "notes": "Re-implement AXPTaskListBlockModel.handleIntent(_:) (MVI state machine) against the mocked AXPTaskListDataSource. All logic stays in the block model; no singletons/global state/formatter-manager services. Public Intent/State/Output/DataSource/AXPTask types are fixed."
+}
