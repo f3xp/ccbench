@@ -11,21 +11,24 @@
 import Foundation
 
 /// Shared JSON coder: snake_case keys, pretty-printed with indent 2.
-enum CCJSON {
-    static let encoder: JSONEncoder = {
+///
+/// Exposed so a host app can write and read manifests with the exact on-disk
+/// conventions the SDK uses (snake_case, sorted keys) rather than replicating them.
+public enum CCJSON {
+    public static let encoder: JSONEncoder = {
         let e = JSONEncoder()
         e.outputFormatting = [.prettyPrinted, .sortedKeys]
         e.keyEncodingStrategy = .convertToSnakeCase
         return e
     }()
 
-    static let decoder: JSONDecoder = {
+    public static let decoder: JSONDecoder = {
         let d = JSONDecoder()
         d.keyDecodingStrategy = .convertFromSnakeCase
         return d
     }()
 
-    static func encodeString<T: Encodable>(_ value: T) throws -> String {
+    public static func encodeString<T: Encodable>(_ value: T) throws -> String {
         String(data: try encoder.encode(value), encoding: .utf8) ?? ""
     }
 }

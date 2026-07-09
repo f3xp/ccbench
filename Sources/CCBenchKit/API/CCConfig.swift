@@ -6,8 +6,8 @@
 // knobs: models, budgets, the Claude Code invocation policy, and the push guard.
 import Foundation
 
-public struct CCConfig: Sendable {
-    public struct Models: Sendable {
+public struct CCConfig: Sendable, Codable {
+    public struct Models: Sendable, Codable {
         public var agent: String
         public var agentEffort: String?
         public var judge: String
@@ -20,9 +20,19 @@ public struct CCConfig: Sendable {
             self.judge = judge
             self.judgeEffort = judgeEffort
         }
+
+        enum CodingKeys: String, CodingKey { case agent, agentEffort, judge, judgeEffort }
+        public init(from d: Decoder) throws {
+            let c = try d.container(keyedBy: CodingKeys.self)
+            let def = Models()
+            agent = try c.decodeIfPresent(String.self, forKey: .agent) ?? def.agent
+            agentEffort = try c.decodeIfPresent(String.self, forKey: .agentEffort) ?? def.agentEffort
+            judge = try c.decodeIfPresent(String.self, forKey: .judge) ?? def.judge
+            judgeEffort = try c.decodeIfPresent(String.self, forKey: .judgeEffort) ?? def.judgeEffort
+        }
     }
 
-    public struct Budgets: Sendable {
+    public struct Budgets: Sendable, Codable {
         /// Hard cap on total agent cost for one cell (0 = unlimited).
         public var maxCostUsdPerRun: Double
         /// Timeout for the agent session.
@@ -43,9 +53,22 @@ public struct CCConfig: Sendable {
             self.verifyTimeoutS = verifyTimeoutS
             self.judgeTimeoutS = judgeTimeoutS
         }
+
+        enum CodingKeys: String, CodingKey {
+            case maxCostUsdPerRun, sessionTimeoutS, setupTimeoutS, verifyTimeoutS, judgeTimeoutS
+        }
+        public init(from d: Decoder) throws {
+            let c = try d.container(keyedBy: CodingKeys.self)
+            let def = Budgets()
+            maxCostUsdPerRun = try c.decodeIfPresent(Double.self, forKey: .maxCostUsdPerRun) ?? def.maxCostUsdPerRun
+            sessionTimeoutS = try c.decodeIfPresent(Int.self, forKey: .sessionTimeoutS) ?? def.sessionTimeoutS
+            setupTimeoutS = try c.decodeIfPresent(Int.self, forKey: .setupTimeoutS) ?? def.setupTimeoutS
+            verifyTimeoutS = try c.decodeIfPresent(Int.self, forKey: .verifyTimeoutS) ?? def.verifyTimeoutS
+            judgeTimeoutS = try c.decodeIfPresent(Int.self, forKey: .judgeTimeoutS) ?? def.judgeTimeoutS
+        }
     }
 
-    public struct ClaudePolicy: Sendable {
+    public struct ClaudePolicy: Sendable, Codable {
         public var bin: String
         public var allowedTools: [String]?
         public var disallowedTools: [String]?
@@ -58,6 +81,16 @@ public struct CCConfig: Sendable {
             self.allowedTools = allowedTools
             self.disallowedTools = disallowedTools
             self.permissionMode = permissionMode
+        }
+
+        enum CodingKeys: String, CodingKey { case bin, allowedTools, disallowedTools, permissionMode }
+        public init(from d: Decoder) throws {
+            let c = try d.container(keyedBy: CodingKeys.self)
+            let def = ClaudePolicy()
+            bin = try c.decodeIfPresent(String.self, forKey: .bin) ?? def.bin
+            allowedTools = try c.decodeIfPresent([String].self, forKey: .allowedTools)
+            disallowedTools = try c.decodeIfPresent([String].self, forKey: .disallowedTools)
+            permissionMode = try c.decodeIfPresent(String.self, forKey: .permissionMode) ?? def.permissionMode
         }
     }
 
@@ -76,6 +109,17 @@ public struct CCConfig: Sendable {
         self.budgets = budgets
         self.claude = claude
         self.pushGuard = pushGuard
+    }
+
+    enum CodingKeys: String, CodingKey { case models, runsPerCell, budgets, claude, pushGuard }
+    public init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        let def = CCConfig()
+        models = try c.decodeIfPresent(Models.self, forKey: .models) ?? def.models
+        runsPerCell = try c.decodeIfPresent(Int.self, forKey: .runsPerCell) ?? def.runsPerCell
+        budgets = try c.decodeIfPresent(Budgets.self, forKey: .budgets) ?? def.budgets
+        claude = try c.decodeIfPresent(ClaudePolicy.self, forKey: .claude) ?? def.claude
+        pushGuard = try c.decodeIfPresent(Bool.self, forKey: .pushGuard) ?? def.pushGuard
     }
 
     /// Sensible starting point: Opus agent, pinned judge, push guard on, a

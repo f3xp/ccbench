@@ -29,5 +29,10 @@ let package = Package(
             ],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
+        .testTarget(
+            name: "CCBenchKitTests",
+            dependencies: ["CCBenchKit"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
     ]
 )

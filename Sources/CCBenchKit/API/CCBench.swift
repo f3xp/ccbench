@@ -68,6 +68,42 @@ public struct SelftestResult: Sendable {
     public let summary: String
 }
 
+/// A lightweight description of one prior run under a workspace's `resultsDir`,
+/// derived without a full re-aggregation. Headline numbers are computed over all
+/// cells in the run: `headlineVerifyPassRate` is the mean `verify_pass_rate`
+/// (nil if no cell ran verify); `headlineCostUsd` is the run's total agent spend.
+public struct RunSummary: Codable, Sendable {
+    /// The results subdirectory name.
+    public var name: String
+    public var dir: URL
+    /// Earliest cell `started_at` in the run, if any cell recorded one.
+    public var startedAt: String?
+    public var tasks: [String]
+    public var variants: [String]
+    public var nCells: Int
+    public var headlineVerifyPassRate: Double?
+    public var headlineCostUsd: Double?
+
+    public init(name: String, dir: URL, startedAt: String?, tasks: [String], variants: [String],
+                nCells: Int, headlineVerifyPassRate: Double?, headlineCostUsd: Double?) {
+        self.name = name; self.dir = dir; self.startedAt = startedAt
+        self.tasks = tasks; self.variants = variants; self.nCells = nCells
+        self.headlineVerifyPassRate = headlineVerifyPassRate; self.headlineCostUsd = headlineCostUsd
+    }
+}
+
+/// A finding from validating a `RunPlan` against the workspace. `isError` marks a
+/// blocking problem (the run would fail or misbehave) vs. a warning.
+public struct PlanIssue: Sendable, Equatable {
+    public var message: String
+    public var isError: Bool
+
+    public init(message: String, isError: Bool) {
+        self.message = message
+        self.isError = isError
+    }
+}
+
 // MARK: - Facade
 
 public actor CCBench {
@@ -89,6 +125,55 @@ public actor CCBench {
             checks: rep.checks.map { SelftestCheck(name: $0.name, ok: $0.ok, message: $0.msg) },
             summary: rep.render()
         )
+    }
+
+    /// Cheaply validate a plan against the workspace *without spending budget*:
+    /// task/variant IDs resolve, exactly one control among the selected variants,
+    /// and `.skill` mounts resolve on disk. Distinct from the paid `selftest`.
+    /// Returns issues (does not throw on validation failures); throws only if the
+    /// workspace itself is unreadable in an unexpected way.
+    public func validate(_ plan: RunPlan) throws -> [PlanIssue] {
+        var issues: [PlanIssue] = []
+
+        // Resolve variants (a "not found" id is a validation error, not a throw).
+        var variants: [Variant] = []
+        do {
+            variants = try Manifests.loadVariants(from: workspace.variantsDir, ids: plan.variantIDs)
+            if variants.isEmpty {
+                issues.append(PlanIssue(message: "no variants resolved from \(plan.variantIDs)", isError: true))
+            }
+        } catch {
+            issues.append(PlanIssue(message: "\(error)", isError: true))
+        }
+
+        // Resolve tasks.
+        do {
+            let tasks = try Manifests.loadTasks(from: workspace.tasksDir, ids: plan.taskIDs)
+            if tasks.isEmpty {
+                issues.append(PlanIssue(message: "no tasks resolved from \(plan.taskIDs)", isError: true))
+            }
+        } catch {
+            issues.append(PlanIssue(message: "\(error)", isError: true))
+        }
+
+        // Exactly one control among the *selected* variants.
+        if !variants.isEmpty {
+            let controls = variants.filter(\.control).map(\.id)
+            if controls.isEmpty {
+                issues.append(PlanIssue(message: "no control variant among the selected variants", isError: true))
+            } else if controls.count > 1 {
+                issues.append(PlanIssue(message: "multiple control variants selected: \(controls.joined(separator: ", "))", isError: true))
+            }
+        }
+
+        // `.skill` mounts must resolve on disk (reuse the manifest mount check).
+        for v in variants where v.kind == .skill {
+            for issue in Manifests.validate(variant: v, in: workspace.variantsDir) where issue.field == "mount" {
+                issues.append(PlanIssue(message: "variant \(v.id): \(issue.message)", isError: issue.isError))
+            }
+        }
+
+        return issues
     }
 
     /// Run the full benchmark, streaming progress. Cancel by cancelling the
@@ -132,7 +217,68 @@ public actor CCBench {
         }
     }
 
+    /// The aggregate matrices for a results directory, as a typed model.
+    public nonisolated func aggregate(resultsDir: URL) -> AggregateResult {
+        Aggregate.aggregateResult(resultsDir, label: resultsDir.path)
+    }
+
+    /// Enumerate prior runs under `workspace.resultsDir` (each immediate subdir
+    /// holding at least one `cell.json`), newest-first. Lightweight: derives
+    /// tasks/variants/counts and headline numbers from a single cell scan per run,
+    /// without building the full matrix.
+    public nonisolated func runs() -> [RunSummary] {
+        let root = workspace.resultsDir
+        let fm = FileManager.default
+        guard let entries = try? fm.contentsOfDirectory(
+            at: root, includingPropertiesForKeys: [.isDirectoryKey, .contentModificationDateKey]
+        ) else { return [] }
+
+        var built: [(summary: RunSummary, mtime: Date)] = []
+        for dir in entries {
+            guard (try? dir.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+            else { continue }
+            let cells = Aggregate.loadCells(dir)
+            guard !cells.isEmpty else { continue }
+
+            var tasks = Set<String>(), variants = Set<String>()
+            var starts: [String] = []
+            var verifies: [Double] = []
+            var costSum = 0.0, anyCost = false
+            for c in cells {
+                if let t = c["task_id"] as? String { tasks.insert(t) }
+                if let v = c["variant_id"] as? String { variants.insert(v) }
+                if let s = c["started_at"] as? String { starts.append(s) }
+                let m = Aggregate.cellMetrics(c)
+                if let v = m.numeric["verify_pass_rate"] ?? nil { verifies.append(v) }
+                if let cost = m.numeric["total_cost_usd"] ?? nil { costSum += cost; anyCost = true }
+            }
+            let summary = RunSummary(
+                name: dir.lastPathComponent,
+                dir: dir,
+                startedAt: starts.min(),                       // ISO8601 → lexical min = earliest
+                tasks: tasks.sorted(),
+                variants: variants.sorted(),
+                nCells: cells.count,
+                headlineVerifyPassRate: verifies.isEmpty ? nil : Stats.round(Stats.fmean(verifies) ?? 0, 4),
+                headlineCostUsd: anyCost ? Stats.round(costSum, 4) : nil
+            )
+            let mtime = (try? dir.resourceValues(forKeys: [.contentModificationDateKey]))?
+                .contentModificationDate ?? .distantPast
+            built.append((summary, mtime))
+        }
+
+        return built.sorted { a, b in
+            switch (a.summary.startedAt, b.summary.startedAt) {
+            case let (x?, y?): return x > y
+            case (_?, nil): return true
+            case (nil, _?): return false
+            case (nil, nil): return a.mtime > b.mtime
+            }
+        }.map(\.summary)
+    }
+
     /// The aggregate matrices for a results directory, as a pretty JSON string.
+    /// (Byte-identical to `aggregate(resultsDir:).asTree()` serialized via `PyJSON`.)
     public nonisolated func aggregateJSON(resultsDir: URL) -> String {
         PyJSON.dumps(Aggregate.aggregate(resultsDir, label: resultsDir.path))
     }

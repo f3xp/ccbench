@@ -15,8 +15,24 @@ Legend — **Priority:** P1 (needed by an early app milestone) · P2 (quality-of
 
 ## CR-1 — Typed aggregate model
 
-- **Priority:** P1 · **Status:** Open
+- **Priority:** P1 · **Status:** Landed
 - **Consumed by:** Results (comparison-matrix hero), History (run library, trends).
+
+> **Landed.** `AggregateResult` (+ `MetricStats`, `MetricDelta`, `CellStats`, `MetricInfo`) in
+> `Aggregate.swift`; `CCBench.aggregate(resultsDir:) -> AggregateResult` in `CCBench.swift`. The typed
+> model is now the single source of truth: `AggregateResult.asTree()` projects it back to the
+> `[String: Any]` tree, and `aggregateJSON` serialises that via `PyJSON` — so CLI output is
+> byte-identical (verified by a round-trip test). Deviations from the proposal, to match the real
+> on-disk shape:
+> - `MetricDelta.better` is **`String?`** (winning variant id / `"tie"` / `nil`), not `Bool`.
+> - `MetricStats.mean/median/stdev` are **`Double?`** (`nil` when `n == 0`), not non-optional.
+> - `control` is **`String?`** (may be absent).
+> - `metrics` stays **`[String]`** (the on-disk `metric_keys`); direction is exposed via a computed,
+>   non-encoded **`metricInfos: [MetricInfo]`** (`higherIsBetter: Bool?`).
+> - The matrix cell node is a **`CellStats`** carrying `metrics: [String: MetricStats]` **plus**
+>   `runs`, `statuses: [String?]`, `judgesValid: [Bool?]`, `contamination: [Bool?]`; it encodes/decodes
+>   *flat* (metric keys inline) with literal snake_case keys, so it round-trips with a plain
+>   `JSONDecoder` (a `.convertFromSnakeCase` decoder would mangle the dynamic metric names).
 
 **Current behavior.** `CCBench.aggregateJSON(resultsDir:) -> String`
 (`Sources/CCBenchKit/API/CCBench.swift:136`) returns a pretty-printed JSON *string* backed by
@@ -53,8 +69,15 @@ string from `aggregateJSON` with a snake_case decoder.
 
 ## CR-2 — Run enumeration / summaries
 
-- **Priority:** P1 · **Status:** Open
+- **Priority:** P1 · **Status:** Landed
 - **Consumed by:** History (run library, side-by-side compare, trend charts), Home (past-run count).
+
+> **Landed.** `RunSummary` + `CCBench.runs() -> [RunSummary]` (nonisolated), newest-first. Lightweight:
+> one cell scan per run subdir (no full matrix build) for tasks/variants/`nCells`, earliest
+> `started_at`, and the headline numbers. **Headline semantics chosen** (the proposal left them TBD):
+> `headlineVerifyPassRate` = mean `verify_pass_rate` across all cells (`nil` if none ran verify);
+> `headlineCostUsd` = **sum** of `total_cost_usd` across all cells (the run's total spend). Ordering is
+> by `startedAt` desc, falling back to the run dir's modification date.
 
 **Current behavior.** No API lists prior runs under `workspace.resultsDir`. The layout is
 `resultsDir/<name>/<task>/<variant>/run-<k>/cell.json`, but discovering runs and their headline
@@ -86,8 +109,17 @@ derive summaries.
 
 ## CR-3 — Public JSON coder + manifest load/save/validate API
 
-- **Priority:** P1 · **Status:** Open
+- **Priority:** P1 · **Status:** Landed
 - **Consumed by:** Author (Variant/Task editors), Run (pre-launch validation).
+
+> **Landed.** `CCJSON` is now `public` (`encoder`/`decoder`/`encodeString`). `Manifests` is `public`
+> with public `loadVariants`/`loadTasks`, plus `save(_ variant:to:)` / `save(_ task:to:)` (snake_case,
+> sorted keys; parent dirs created). Added `ManifestIssue { field, message, isError }`. **Deviation:**
+> `validate` is exposed as **`Manifests.validate(task:)`** and **`Manifests.validate(variant:in:)`**
+> statics (not free functions) for cleaner namespacing. Rules covered: prompt present
+> (inline or `promptFile`); referenced task-relative paths exist (`promptFile`, `starterPatch`,
+> `hiddenDir`, each judge `rubric`/`goodRef`/`badRef`, golden `expectedDir`); a missing verify command
+> is a warning; exactly one `control` across a variant set; `.skill` mount resolves.
 
 **Current behavior.** The snake_case coder `CCJSON` is an internal `enum`
 (`Sources/CCBenchKit/Schemas.swift:14`), and `Manifests.loadVariants` / `Manifests.loadTasks`
@@ -125,8 +157,13 @@ and implements the validation rules client-side.
 
 ## CR-4 — Persistable (`Codable`) config
 
-- **Priority:** P2 · **Status:** Open
+- **Priority:** P2 · **Status:** Landed
 - **Consumed by:** Run (save/restore last-used config), Home (per-workspace defaults).
+
+> **Landed.** `CCConfig`, `CCConfig.Models`, `CCConfig.Budgets`, `CCConfig.ClaudePolicy` now conform to
+> `Codable`. Encoding is synthesized; each has a custom `init(from:)` using `decodeIfPresent ?? default`
+> (matching the SDK's forward/back-compat convention) so partial/older JSON decodes cleanly. Snake_case
+> on disk via `CCJSON` (e.g. `max_cost_usd_per_run`).
 
 **Current behavior.** `CCConfig` and its nested `Models` / `Budgets` / `ClaudePolicy`
 (`Sources/CCBenchKit/API/CCConfig.swift`) are `Sendable` but not `Codable`, so run
@@ -143,8 +180,14 @@ run time.
 
 ## CR-5 — Cheap plan validation (no budget spend)
 
-- **Priority:** P2 · **Status:** Open
+- **Priority:** P2 · **Status:** Landed
 - **Consumed by:** Run (validate before launch, distinct from the paid `selftest`).
+
+> **Landed.** `PlanIssue { message, isError }` + `CCBench.validate(_ plan: RunPlan) throws -> [PlanIssue]`
+> (actor-isolated). Resolves task/variant IDs against the workspace, checks exactly-one-control among
+> the *selected* variants, and `.skill` mount resolution — no budget spend, no engine calls.
+> **Deviation:** loader "not found" errors are surfaced as `isError` `PlanIssue`s (so the UI gets the
+> full list) rather than thrown; `throws` is retained for genuinely unreadable workspaces.
 
 **Current behavior.** `selftest(skipJudges:)` (`Sources/CCBenchKit/API/CCBench.swift:83`)
 validates toolchain/auth/repos/judges but may exercise real tooling. There is no cheap check

@@ -215,7 +215,7 @@ public struct BenchTask: Codable, Sendable, Identifiable {
 
 // MARK: - Loading
 
-enum Manifests {
+public enum Manifests {
     /// Expand a leading `~` to the home directory.
     static func expand(_ path: String) -> String {
         (path as NSString).expandingTildeInPath
@@ -228,7 +228,7 @@ enum Manifests {
         return base.appendingPathComponent(expanded)
     }
 
-    static func loadVariants(from variantsDir: URL, ids: [String]) throws -> [Variant] {
+    public static func loadVariants(from variantsDir: URL, ids: [String]) throws -> [Variant] {
         let fm = FileManager.default
         let wantsAll = ids.isEmpty || ids.contains("all") || ids.contains("*")
         var files: [URL] = []
@@ -253,7 +253,7 @@ enum Manifests {
         }
     }
 
-    static func loadTasks(from tasksDir: URL, ids: [String]) throws -> [BenchTask] {
+    public static func loadTasks(from tasksDir: URL, ids: [String]) throws -> [BenchTask] {
         let fm = FileManager.default
         let wantsAll = ids.isEmpty || ids.contains("all") || ids.contains("*")
         var dirs: [URL] = []
@@ -285,5 +285,127 @@ enum Manifests {
                 return task
             } catch { throw CCError("invalid task \(dir.lastPathComponent): \(error)") }
         }
+    }
+
+    // MARK: - Saving
+
+    /// Write a variant manifest to `url` using the on-disk conventions
+    /// (snake_case keys, sorted, pretty-printed). Parent directories are created.
+    public static func save(_ variant: Variant, to url: URL) throws {
+        try write(try CCJSON.encoder.encode(variant), to: url)
+    }
+
+    /// Write a task manifest to `url` (typically `<task>/task.json`). The task's
+    /// `dir` is not part of the schema, so it is not written.
+    public static func save(_ task: BenchTask, to url: URL) throws {
+        try write(try CCJSON.encoder.encode(task), to: url)
+    }
+
+    private static func write(_ data: Data, to url: URL) throws {
+        let dir = url.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try data.write(to: url, options: .atomic)
+    }
+
+    // MARK: - Validation
+
+    /// Static, cheap manifest validation covering the invariants the engine assumes.
+    /// Non-blocking: returns issues (with `isError` distinguishing hard failures from
+    /// warnings) rather than throwing, so an editor can surface them all at once.
+    public static func validate(task: BenchTask) -> [ManifestIssue] {
+        var issues: [ManifestIssue] = []
+        let fm = FileManager.default
+
+        func requirePath(_ path: String?, field: String, isError: Bool = true) {
+            guard let path, !path.isEmpty else { return }
+            let url = resolve(path, base: task.dir)
+            if !fm.fileExists(atPath: url.path) {
+                issues.append(ManifestIssue(field: field,
+                                            message: "referenced path does not exist: \(path)",
+                                            isError: isError))
+            }
+        }
+
+        if task.repo.trimmingCharacters(in: .whitespaces).isEmpty {
+            issues.append(ManifestIssue(field: "repo", message: "repo is required", isError: true))
+        }
+        if task.baseRef.trimmingCharacters(in: .whitespaces).isEmpty {
+            issues.append(ManifestIssue(field: "base_ref", message: "base_ref is required", isError: true))
+        }
+        // A prompt must come from somewhere.
+        let hasInline = !(task.prompt?.isEmpty ?? true)
+        if !hasInline && (task.promptFile?.isEmpty ?? true) {
+            issues.append(ManifestIssue(field: "prompt",
+                                        message: "task has neither an inline prompt nor a prompt_file",
+                                        isError: true))
+        }
+        requirePath(task.promptFile, field: "prompt_file")
+        requirePath(task.starterPatch, field: "starter_patch")
+        requirePath(task.hiddenDir, field: "hidden_dir")
+
+        // Scoring: a verify gate is expected (warn, not error, if absent).
+        if task.scoring.verify == nil {
+            issues.append(ManifestIssue(field: "scoring.verify",
+                                        message: "no verify command; correctness cannot be gated",
+                                        isError: false))
+        }
+        for (i, judge) in (task.scoring.judges ?? []).enumerated() {
+            requirePath(judge.rubric, field: "scoring.judges[\(i)].rubric")
+            requirePath(judge.goodRef, field: "scoring.judges[\(i)].good_ref")
+            requirePath(judge.badRef, field: "scoring.judges[\(i)].bad_ref")
+        }
+        if let golden = task.scoring.golden {
+            requirePath(golden.expectedDir, field: "scoring.golden.expected_dir")
+        }
+        return issues
+    }
+
+    /// Validate a variant against its sibling set: exactly one control across the
+    /// set, and (for `.skill`) that the mount resolves on disk.
+    public static func validate(variant: Variant, in variantsDir: URL) -> [ManifestIssue] {
+        var issues: [ManifestIssue] = []
+
+        if let set = try? loadVariants(from: variantsDir, ids: ["all"]) {
+            let controls = set.filter { $0.control }.map(\.id)
+            if controls.isEmpty {
+                issues.append(ManifestIssue(field: "control",
+                                            message: "no variant in the set is marked control",
+                                            isError: true))
+            } else if controls.count > 1 {
+                issues.append(ManifestIssue(field: "control",
+                                            message: "multiple controls: \(controls.joined(separator: ", "))",
+                                            isError: true))
+            }
+        }
+
+        if variant.kind == .skill {
+            if let mount = variant.mount, !mount.isEmpty {
+                let url = resolve(mount, base: variantsDir)
+                if !FileManager.default.fileExists(atPath: url.path) {
+                    issues.append(ManifestIssue(field: "mount",
+                                                message: "mount path does not exist: \(mount)",
+                                                isError: true))
+                }
+            } else {
+                issues.append(ManifestIssue(field: "mount",
+                                            message: ".skill variant has no mount",
+                                            isError: true))
+            }
+        }
+        return issues
+    }
+}
+
+/// A single validation finding on a manifest. `isError` distinguishes a hard
+/// failure (the engine would reject or misbehave) from a warning.
+public struct ManifestIssue: Sendable, Equatable {
+    public var field: String
+    public var message: String
+    public var isError: Bool
+
+    public init(field: String, message: String, isError: Bool) {
+        self.field = field
+        self.message = message
+        self.isError = isError
     }
 }
