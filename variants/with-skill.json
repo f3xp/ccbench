@@ -1,0 +1,8 @@
+{
+  "id": "with-skill",
+  "kind": "skill",
+  "mount": "~/my-workflow",
+  "mountAs": ".claude",
+  "promptPrefix": "Follow the loaded project workflow. Work autonomously; when a decision has a safe default, take it and proceed.",
+  "_comment": "Points `mount` at a directory containing a skill / plugin / .claude project. It is symlinked into the worktree as `mountAs` and loaded via --setting-sources project. Set `mount` to the workflow you want to benchmark."
+}

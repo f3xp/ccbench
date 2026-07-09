@@ -1,0 +1,11 @@
+{
+  "id": "example-greeter",
+  "repo": ".scratch/example-repo",
+  "baseRef": "main",
+  "prompt": "Implement the `greet(name)` function in greet.py so that it returns the string \"Hello, <name>!\". For example, greet(\"World\") must return \"Hello, World!\". Do not add any other files or dependencies.",
+  "hiddenDir": "hidden",
+  "scoring": {
+    "verify": { "command": ["python3", "run_verify.py"] },
+    "diffMetrics": true
+  }
+}
