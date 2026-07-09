@@ -26,6 +26,15 @@ enum ShellError: Error, CustomStringConvertible {
     }
 }
 
+/// A tiny lock-guarded `Data` accumulator, so the streaming read loop can append
+/// on its background queue without data-race warnings.
+final class DataBox: @unchecked Sendable {
+    private var buf = Data()
+    private let lock = NSLock()
+    func append(_ d: Data) { lock.lock(); buf.append(d); lock.unlock() }
+    var data: Data { lock.lock(); defer { lock.unlock() }; return buf }
+}
+
 enum Shell {
     /// Run a command to completion. Mirrors `subprocess.run(capture_output=True, text=True)`.
     ///
@@ -101,6 +110,100 @@ enum Shell {
 
         group.wait()
         let stdout = String(data: outData, encoding: .utf8) ?? ""
+        let stderr = String(data: errData, encoding: .utf8) ?? ""
+        let code = proc.terminationStatus
+
+        if check && !timedOut && code != 0 {
+            throw ShellError.nonZeroExit(argv: argv, code: code, stderr: stderr)
+        }
+        return ProcessResult(exitCode: code, stdout: stdout, stderr: stderr, timedOut: timedOut)
+    }
+
+    /// Like `run`, but pumps stdout line-by-line to `onLine` as it arrives (for
+    /// `claude --output-format stream-json`). The full stdout is still accumulated
+    /// and returned, so callers can parse the final result afterward. stderr,
+    /// timeout, and exit handling match `run`.
+    @discardableResult
+    static func runStreaming(
+        _ argv: [String],
+        cwd: URL? = nil,
+        env: [String: String]? = nil,
+        check: Bool = false,
+        timeout: Double? = nil,
+        onLine: @escaping @Sendable (String) -> Void
+    ) throws -> ProcessResult {
+        guard argv.first != nil else { throw ShellError.launchFailed("empty argv") }
+
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        proc.arguments = argv
+        if let cwd { proc.currentDirectoryURL = cwd }
+        if let env { proc.environment = env }
+
+        let outPipe = Pipe()
+        let errPipe = Pipe()
+        proc.standardOutput = outPipe
+        proc.standardError = errPipe
+
+        let outBox = DataBox()
+        var errData = Data()
+        let outQ = DispatchQueue(label: "shell.out.stream")
+        let errQ = DispatchQueue(label: "shell.err")
+        let group = DispatchGroup()
+
+        do {
+            try proc.run()
+        } catch {
+            throw ShellError.launchFailed(String(describing: error))
+        }
+
+        group.enter()
+        outQ.async {
+            let h = outPipe.fileHandleForReading
+            var buffer = Data()
+            while true {
+                let chunk = h.availableData
+                if chunk.isEmpty { break }          // EOF
+                outBox.append(chunk)
+                buffer.append(chunk)
+                while let nl = buffer.firstIndex(of: 0x0A) {
+                    let lineData = buffer.subdata(in: buffer.startIndex..<nl)
+                    buffer.removeSubrange(buffer.startIndex...nl)
+                    if let line = String(data: lineData, encoding: .utf8) { onLine(line) }
+                }
+            }
+            if !buffer.isEmpty, let line = String(data: buffer, encoding: .utf8),
+               !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                onLine(line)
+            }
+            group.leave()
+        }
+        group.enter()
+        errQ.async {
+            errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+            group.leave()
+        }
+
+        var timedOut = false
+        if let timeout {
+            let deadline = DispatchTime.now() + timeout
+            let watchdog = DispatchQueue(label: "shell.watchdog")
+            let sem = DispatchSemaphore(value: 0)
+            watchdog.async {
+                proc.waitUntilExit()
+                sem.signal()
+            }
+            if sem.wait(timeout: deadline) == .timedOut {
+                timedOut = true
+                proc.terminate()
+                proc.waitUntilExit()
+            }
+        } else {
+            proc.waitUntilExit()
+        }
+
+        group.wait()
+        let stdout = String(data: outBox.data, encoding: .utf8) ?? ""
         let stderr = String(data: errData, encoding: .utf8) ?? ""
         let code = proc.terminationStatus
 

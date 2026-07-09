@@ -17,7 +17,8 @@ struct RunResult {
 
 enum Runner {
     static func run(_ cfg: Config, variant: Variant, task: BenchTask, worktree: URL,
-                    runDir: URL, onStep: (StepTelemetry) -> Void = { _ in }) -> RunResult {
+                    runDir: URL, onStep: @Sendable (StepTelemetry) -> Void = { _ in },
+                    onEvent: (@Sendable (AgentStreamEvent) -> Void)? = nil) -> RunResult {
         var res = RunResult()
 
         // Compose the prompt: variant spec file, then variant prefix, then the task prompt.
@@ -39,7 +40,8 @@ enum Runner {
             appendSystemPrompt: variant.appendSystemPrompt,
             settingSources: variant.effectiveSettingSources,
             allowedTools: variant.allowedTools,
-            disallowedTools: variant.disallowedTools
+            disallowedTools: variant.disallowedTools,
+            onEvent: onEvent
         )
         res.transcripts.append(out.transcriptPath ?? "")
         let tele = Telemetry.stepTelemetry("session", out)

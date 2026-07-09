@@ -100,18 +100,26 @@ public struct CCConfig: Sendable, Codable {
     public var claude: ClaudePolicy
     /// Refuse to drive an agent in a worktree whose `git push` is not disabled.
     public var pushGuard: Bool
+    /// Max cells to run concurrently. `1` (default) keeps the strictly sequential
+    /// engine; higher values run independent cells in parallel with the same
+    /// worktree/push-guard isolation.
+    public var maxConcurrentCells: Int
 
     public init(models: Models = Models(), runsPerCell: Int = 3,
                 budgets: Budgets = Budgets(),
-                claude: ClaudePolicy = ClaudePolicy(), pushGuard: Bool = true) {
+                claude: ClaudePolicy = ClaudePolicy(), pushGuard: Bool = true,
+                maxConcurrentCells: Int = 1) {
         self.models = models
         self.runsPerCell = runsPerCell
         self.budgets = budgets
         self.claude = claude
         self.pushGuard = pushGuard
+        self.maxConcurrentCells = maxConcurrentCells
     }
 
-    enum CodingKeys: String, CodingKey { case models, runsPerCell, budgets, claude, pushGuard }
+    enum CodingKeys: String, CodingKey {
+        case models, runsPerCell, budgets, claude, pushGuard, maxConcurrentCells
+    }
     public init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
         let def = CCConfig()
@@ -120,6 +128,7 @@ public struct CCConfig: Sendable, Codable {
         budgets = try c.decodeIfPresent(Budgets.self, forKey: .budgets) ?? def.budgets
         claude = try c.decodeIfPresent(ClaudePolicy.self, forKey: .claude) ?? def.claude
         pushGuard = try c.decodeIfPresent(Bool.self, forKey: .pushGuard) ?? def.pushGuard
+        maxConcurrentCells = try c.decodeIfPresent(Int.self, forKey: .maxConcurrentCells) ?? def.maxConcurrentCells
     }
 
     /// Sensible starting point: Opus agent, pinned judge, push guard on, a

@@ -25,6 +25,9 @@ public struct RunPlan: Sendable {
     public var outputName: String?
     /// Run the pre-flight selftest before spending budget (aborts on failure).
     public var selftestFirst: Bool
+    /// Stream the agent's `claude` stream-json output as `BenchEvent.agentStreamed`
+    /// while each cell runs. Opt-in: off by default (the buffered path is unchanged).
+    public var streamAgentOutput: Bool
 
     public init(taskIDs: [String] = ["all"],
                 variantIDs: [String] = ["all"],
@@ -32,7 +35,8 @@ public struct RunPlan: Sendable {
                 runJudges: Bool = true,
                 keepWorktrees: Bool = false,
                 outputName: String? = nil,
-                selftestFirst: Bool = true) {
+                selftestFirst: Bool = true,
+                streamAgentOutput: Bool = false) {
         self.taskIDs = taskIDs
         self.variantIDs = variantIDs
         self.runsPerCell = runsPerCell
@@ -40,6 +44,29 @@ public struct RunPlan: Sendable {
         self.keepWorktrees = keepWorktrees
         self.outputName = outputName
         self.selftestFirst = selftestFirst
+        self.streamAgentOutput = streamAgentOutput
+    }
+}
+
+/// A single live event from the agent's `claude` stream-json output, forwarded
+/// while a cell runs (only when `RunPlan.streamAgentOutput` is set).
+public struct AgentStreamEvent: Sendable {
+    /// The stream-json message `type` (e.g. `system`, `assistant`, `user`, `result`).
+    public var kind: String
+    /// Human-readable text extracted from the message, when present (assistant text,
+    /// tool name, or the final result summary).
+    public var text: String?
+    /// Cumulative turn count, when the message carries it (final `result` message).
+    public var numTurns: Int?
+    /// Cumulative cost in USD, when the message carries it (final `result` message).
+    public var costUsd: Double?
+    /// The raw JSON line, for consumers that want the full payload.
+    public var raw: String
+
+    public init(kind: String, text: String? = nil, numTurns: Int? = nil,
+                costUsd: Double? = nil, raw: String) {
+        self.kind = kind; self.text = text; self.numTurns = numTurns
+        self.costUsd = costUsd; self.raw = raw
     }
 }
 
@@ -48,6 +75,8 @@ public struct RunPlan: Sendable {
 public enum BenchEvent: Sendable {
     case runStarted(tasks: [String], variants: [String], runs: Int, resultsDir: URL)
     case cellStarted(taskID: String, variant: String, runIndex: Int)
+    /// Live intra-cell progress from the agent session (opt-in via `RunPlan`).
+    case agentStreamed(taskID: String, variant: String, runIndex: Int, event: AgentStreamEvent)
     case stepCompleted(taskID: String, variant: String, runIndex: Int, step: StepTelemetry)
     case cellFinished(Cell)
     case runFinished(resultsDir: URL, reportMarkdown: URL, reportHTML: URL)

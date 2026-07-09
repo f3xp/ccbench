@@ -27,6 +27,25 @@ enum Sandbox {
     static let gitId = ["-c", "user.email=ccbench@local", "-c", "user.name=ccbench"]
     static let pushGuardURL = "DISABLED_NO_PUSH_ccbench"
 
+    // MARK: Per-repo serialization (for parallel cells)
+    //
+    // Cells of the same task share one on-disk repo; `git worktree add/remove/prune`
+    // and the push-guard config write mutate its shared registry/config. A lock
+    // keyed by repo path serializes just those seconds-long sections, while the
+    // long agent session + scoring run in parallel. Different repos → different
+    // locks → fully parallel.
+    private static let repoLocksGuard = NSLock()
+    nonisolated(unsafe) private static var repoLocks: [String: NSLock] = [:]
+
+    static func repoLock(for repo: URL) -> NSLock {
+        let key = repo.resolvingSymlinksInPath().path
+        repoLocksGuard.lock(); defer { repoLocksGuard.unlock() }
+        if let lock = repoLocks[key] { return lock }
+        let lock = NSLock()
+        repoLocks[key] = lock
+        return lock
+    }
+
     @discardableResult
     static func git(_ args: [String], cwd: URL, check: Bool = true) throws -> ProcessResult {
         try Shell.run(["git"] + args, cwd: cwd, check: check)
@@ -46,6 +65,10 @@ enum Sandbox {
     ) throws -> Worktree {
         let fm = FileManager.default
         let target = repoURL(task)
+        // Serialize shared-repo worktree registry mutations across concurrent cells.
+        let lock = repoLock(for: target)
+        lock.lock()
+        defer { lock.unlock() }
         let baseRef = task.baseRef
         if !fm.fileExists(atPath: target.appendingPathComponent(".git").path) {
             throw CCError("task repo is not a git repo: \(target.path)")
@@ -134,6 +157,9 @@ enum Sandbox {
 
     static func teardown(_ task: BenchTask, _ wt: Worktree) {
         let target = repoURL(task)
+        let lock = repoLock(for: target)
+        lock.lock()
+        defer { lock.unlock() }
         _ = try? git(["worktree", "remove", "--force", wt.path.path], cwd: target, check: false)
         if FileManager.default.fileExists(atPath: wt.path.path) {
             try? FileManager.default.removeItem(at: wt.path)

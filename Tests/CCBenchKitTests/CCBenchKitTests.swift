@@ -242,6 +242,66 @@ private enum Fixture {
     #expect(cfg.budgets.maxCostUsdPerRun == 40.0)      // default preserved
     #expect(cfg.models.agent == "opus")                // default preserved
     #expect(cfg.pushGuard == true)                     // default preserved
+    #expect(cfg.maxConcurrentCells == 1)               // CR-6 default preserved
+}
+
+// MARK: - CR-6: concurrency knob + live streaming
+
+@Test func maxConcurrentCellsRoundTripsAndDefaultsToOne() throws {
+    #expect(CCConfig.default.maxConcurrentCells == 1)
+    #expect(RunPlan().streamAgentOutput == false)
+
+    var cfg = CCConfig.default
+    cfg.maxConcurrentCells = 4
+    let data = try CCJSON.encoder.encode(cfg)
+    #expect(try #require(String(data: data, encoding: .utf8)).contains("max_concurrent_cells"))
+    let back = try CCJSON.decoder.decode(CCConfig.self, from: data)
+    #expect(back.maxConcurrentCells == 4)
+}
+
+@Test func repoLockIsStablePerPathAndDistinctAcrossPaths() {
+    let a = URL(fileURLWithPath: "/tmp/repo-a")
+    let b = URL(fileURLWithPath: "/tmp/repo-b")
+    #expect(Sandbox.repoLock(for: a) === Sandbox.repoLock(for: a))
+    #expect(Sandbox.repoLock(for: a) !== Sandbox.repoLock(for: b))
+}
+
+@Test func parseStreamLineDecodesMessageKinds() {
+    // Assistant text + tool_use.
+    let assistant = #"{"type":"assistant","message":{"content":[{"type":"text","text":"hi"},{"type":"tool_use","name":"Edit"}]}}"#
+    let a = try? #require(ClaudeCLI.parseStreamLine(assistant))
+    #expect(a?.kind == "assistant")
+    #expect(a?.text?.contains("hi") == true)
+    #expect(a?.text?.contains("[tool: Edit]") == true)
+
+    // Final result carries turns/cost and drives telemetry.
+    let result = #"{"type":"result","subtype":"success","result":"done","num_turns":5,"total_cost_usd":1.25,"session_id":"s1","usage":{"input_tokens":10,"output_tokens":20}}"#
+    let r = try? #require(ClaudeCLI.parseStreamLine(result))
+    #expect(r?.kind == "result")
+    #expect(r?.numTurns == 5)
+    #expect(r?.costUsd == 1.25)
+
+    // Blank/garbage lines are ignored.
+    #expect(ClaudeCLI.parseStreamLine("") == nil)
+    #expect(ClaudeCLI.parseStreamLine("not json") == nil)
+}
+
+@Test func collectedStreamObjectsYieldSameTelemetryAsBufferedResult() throws {
+    // The streaming path builds its envelope from collected line-objects via
+    // normalizeEnvelope; telemetry must match a buffered `--output-format json`.
+    let lines = [
+        #"{"type":"system","subtype":"init"}"#,
+        #"{"type":"assistant","message":{"content":[{"type":"text","text":"working"}]}}"#,
+        #"{"type":"result","subtype":"success","result":"done","num_turns":3,"total_cost_usd":0.5,"session_id":"abc","usage":{"input_tokens":100,"output_tokens":200}}"#,
+    ]
+    let objs = lines.compactMap { ClaudeCLI.parseStreamObject($0) }
+    let envelope = ClaudeCLI.normalizeEnvelope(objs)
+    let res = ClaudeResult(ok: true, timedOut: false, exitCode: 0, wallClockS: 1.0, envelope: envelope)
+    let tele = Telemetry.stepTelemetry("session", res)
+    #expect(tele.costUsd == 0.5)
+    #expect(tele.numTurns == 3)
+    #expect(tele.sessionId == "abc")
+    #expect(tele.outputTokens == 200)
 }
 
 // MARK: - CR-5: plan validation

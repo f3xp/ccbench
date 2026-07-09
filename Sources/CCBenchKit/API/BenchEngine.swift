@@ -14,10 +14,15 @@ enum BenchEngine {
 
     static func runCell(_ cfg: Config, workspace: CCWorkspace, task: BenchTask, variant: Variant,
                         runIndex: Int, forbiddenMounts: Set<String>, outRoot: URL,
-                        runJudges: Bool, keepWorktree: Bool, emit: (BenchEvent) -> Void) -> Cell {
+                        runJudges: Bool, keepWorktree: Bool, streamAgentOutput: Bool = false,
+                        emit: @escaping @Sendable (BenchEvent) -> Void) -> Cell {
         let runDir = outRoot.appendingPathComponent(task.id).appendingPathComponent(variant.id)
             .appendingPathComponent("run-\(runIndex)")
         try? FileManager.default.createDirectory(at: runDir, withIntermediateDirectories: true)
+
+        // Per-cell judge scratch dir so concurrent cells never share a judge workdir.
+        let judgeScratch = workspace.judgeScratchDir.appendingPathComponent(task.id)
+            .appendingPathComponent(variant.id).appendingPathComponent("run-\(runIndex)")
 
         var cell = Cell(taskId: task.id, variantId: variant.id, runIndex: runIndex,
                         startedAt: Timestamp.now())
@@ -25,8 +30,14 @@ enum BenchEngine {
         cell.variantKind = variant.kind.rawValue
         var wt: Worktree?
 
-        let onStep: (StepTelemetry) -> Void = { tele in
+        let onStep: @Sendable (StepTelemetry) -> Void = { tele in
             emit(.stepCompleted(taskID: task.id, variant: variant.id, runIndex: runIndex, step: tele))
+        }
+        var onEvent: (@Sendable (AgentStreamEvent) -> Void)?
+        if streamAgentOutput {
+            onEvent = { ev in
+                emit(.agentStreamed(taskID: task.id, variant: variant.id, runIndex: runIndex, event: ev))
+            }
         }
 
         do {
@@ -42,7 +53,7 @@ enum BenchEngine {
 
             // --- Drive the agent ---
             let rr = Runner.run(cfg, variant: variant, task: task, worktree: prepared.path,
-                                runDir: runDir, onStep: onStep)
+                                runDir: runDir, onStep: onStep, onEvent: onEvent)
             cell.artifacts.transcripts = rr.transcripts
             cell.efficiency = Telemetry.rollUp(rr.steps)
             cell.status = ["ok", "agent_error"].contains(rr.status) ? rr.status : "ok"
@@ -55,7 +66,7 @@ enum BenchEngine {
 
             // --- Score ---
             let ctx = ScoreContext(cfg: cfg, task: task, worktree: prepared, runDir: runDir,
-                                   scratch: workspace.judgeScratchDir, runJudges: runJudges)
+                                   scratch: judgeScratch, runJudges: runJudges)
             let (q, diffPath) = ScorePipeline.scoreWorktree(ctx)
             cell.quality = q
             cell.artifacts.diff = diffPath
@@ -82,7 +93,7 @@ enum BenchEngine {
     // MARK: Full run
 
     static func run(_ plan: RunPlan, workspace: CCWorkspace, config cfg: Config,
-                    emit: (BenchEvent) -> Void) throws {
+                    emit: @escaping @Sendable (BenchEvent) -> Void) throws {
         let tasks = try Manifests.loadTasks(from: workspace.tasksDir, ids: plan.taskIDs)
         if tasks.isEmpty {
             throw CCError("no tasks to run (author one under \(workspace.tasksDir.path) first)")
@@ -118,23 +129,56 @@ enum BenchEngine {
         emit(.log("\n== ccbench run → \(outRoot.path) =="))
         emit(.log("tasks=\(taskIDs) variants=\(variantIDs) runs=\(n)\n"))
 
-        for task in tasks {
-            for variant in variants {
-                for k in 0..<n {
-                    try Task.checkCancellation()
-                    emit(.cellStarted(taskID: task.id, variant: variant.id, runIndex: k))
-                    emit(.log("-- \(task.id) / \(variant.id) / run-\(k) --"))
-                    let cell = runCell(cfg, workspace: workspace, task: task, variant: variant,
-                                       runIndex: k, forbiddenMounts: forbiddenMounts, outRoot: outRoot,
-                                       runJudges: plan.runJudges, keepWorktree: plan.keepWorktrees,
-                                       emit: emit)
-                    let pass = optRepr(cell.quality.verifyPassRate)
-                    let cost = String(format: "%.3f", cell.efficiency.totalCostUsd)
-                    let adds = cell.quality.diff?.linesAdded ?? 0
-                    emit(.log("   status=\(cell.status) verify=\(pass) cost=$\(cost) +\(adds)LoC"))
-                    emit(.cellFinished(cell))
+        // One cell's full lifecycle (start → run → finish). `@Sendable` so it can
+        // run on a worker thread in the parallel path.
+        let runOne: @Sendable (BenchTask, Variant, Int) -> Void = { task, variant, k in
+            emit(.cellStarted(taskID: task.id, variant: variant.id, runIndex: k))
+            emit(.log("-- \(task.id) / \(variant.id) / run-\(k) --"))
+            let cell = runCell(cfg, workspace: workspace, task: task, variant: variant,
+                               runIndex: k, forbiddenMounts: forbiddenMounts, outRoot: outRoot,
+                               runJudges: plan.runJudges, keepWorktree: plan.keepWorktrees,
+                               streamAgentOutput: plan.streamAgentOutput, emit: emit)
+            let pass = optRepr(cell.quality.verifyPassRate)
+            let cost = String(format: "%.3f", cell.efficiency.totalCostUsd)
+            let adds = cell.quality.diff?.linesAdded ?? 0
+            emit(.log("   status=\(cell.status) verify=\(pass) cost=$\(cost) +\(adds)LoC"))
+            emit(.cellFinished(cell))
+        }
+
+        let maxConcurrent = max(1, cfg.maxConcurrentCells)
+        if maxConcurrent <= 1 {
+            // Strictly sequential — the historical path, unchanged.
+            for task in tasks {
+                for variant in variants {
+                    for k in 0..<n {
+                        try Task.checkCancellation()
+                        runOne(task, variant, k)
+                    }
                 }
             }
+        } else {
+            // Bounded thread pool: cells are blocking subprocess work, so use a
+            // semaphore + concurrent dispatch queue (not cooperative concurrency).
+            // The emit sink (AsyncThrowingStream continuation) is thread-safe.
+            let sem = DispatchSemaphore(value: maxConcurrent)
+            let group = DispatchGroup()
+            let queue = DispatchQueue(label: "ccbench.cells", attributes: .concurrent)
+            outer: for task in tasks {
+                for variant in variants {
+                    for k in 0..<n {
+                        // Cancelling the consuming Task stops scheduling; in-flight
+                        // cells run to completion.
+                        do { try Task.checkCancellation() } catch { break outer }
+                        sem.wait()
+                        group.enter()
+                        queue.async {
+                            defer { sem.signal(); group.leave() }
+                            runOne(task, variant, k)
+                        }
+                    }
+                }
+            }
+            group.wait()
         }
 
         let agg = Aggregate.aggregate(outRoot)

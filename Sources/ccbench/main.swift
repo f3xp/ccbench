@@ -7,10 +7,18 @@ import Foundation
 import ArgumentParser
 import CCBenchKit
 
-/// Print every free-text progress line from a benchmark stream.
+/// Print every free-text progress line from a benchmark stream, plus live agent
+/// output when streaming is enabled.
 func drain(_ stream: AsyncThrowingStream<BenchEvent, Error>) async throws {
     for try await event in stream {
-        if case .log(let line) = event { print(line) }
+        switch event {
+        case .log(let line):
+            print(line)
+        case .agentStreamed(_, _, _, let ev):
+            if let text = ev.text, !text.isEmpty { print("   … \(text.prefix(200))") }
+        default:
+            break
+        }
     }
 }
 
@@ -51,9 +59,15 @@ struct RunCommand: AsyncParsableCommand {
     @Flag(name: .customLong("keep-worktrees"),
           help: "retain worktrees for later rescore")
     var keepWorktrees = false
+    @Option(name: .customLong("max-concurrent"),
+            help: "number of cells to run in parallel (default 1 = sequential)")
+    var maxConcurrent: Int?
+    @Flag(name: .customLong("stream"), help: "stream live agent output as it runs")
+    var stream = false
 
     func run() async throws {
-        let cfg = CCConfig.default
+        var cfg = CCConfig.default
+        if let maxConcurrent { cfg.maxConcurrentCells = maxConcurrent }
         let plan = RunPlan(
             taskIDs: tasks.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) },
             variantIDs: variants.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) },
@@ -61,7 +75,8 @@ struct RunCommand: AsyncParsableCommand {
             runJudges: !skipJudges,
             keepWorktrees: keepWorktrees,
             outputName: out,
-            selftestFirst: !noSelftest
+            selftestFirst: !noSelftest,
+            streamAgentOutput: stream
         )
         let bench = CCBench(workspace: .locate(), config: cfg)
         try await drain(bench.run(plan))

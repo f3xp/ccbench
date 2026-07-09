@@ -207,10 +207,28 @@ extension CCBench {
 
 ---
 
-## CR-6 — Richer live progress & parallel cells (future)
+## CR-6 — Richer live progress & parallel cells
 
-- **Priority:** P3 · **Status:** Open (documented; out of v1 scope)
+- **Priority:** P3 · **Status:** Landed
 - **Consumed by:** Run (live dashboard) — informs current UX granularity expectations.
+
+> **Landed.** Both halves implemented, default behavior unchanged:
+> - **Live progress** — opt-in `RunPlan.streamAgentOutput` (off by default) switches the agent session
+>   to `claude -p --output-format stream-json --verbose`; `Shell.runStreaming` pumps stdout line by
+>   line and each message is forwarded as `BenchEvent.agentStreamed(taskID:variant:runIndex:event:)`
+>   carrying an `AgentStreamEvent { kind, text?, numTurns?, costUsd?, raw }`. The final `result`
+>   object still drives `StepTelemetry`, so cost/tokens/turns are unchanged vs. the buffered path.
+>   Judges remain non-streamed. When the flag is off, the exact buffered `--output-format json` path
+>   runs.
+> - **Parallel cells** — `CCConfig.maxConcurrentCells` (default `1` ⇒ the historical strictly
+>   sequential loop, byte-for-byte). Higher values run cells through a bounded thread pool
+>   (semaphore + concurrent `DispatchQueue`). Isolation preserved via an `NSLock` keyed by repo path
+>   around the shared-repo `git worktree` registry sections of `Sandbox.prepareWorktree`/`teardown`
+>   (chosen over per-cell clones — cheap, keeps the audited push-guard path), plus a unique per-cell
+>   judge scratch dir. Push-guard and contamination guards are unchanged. Cancelling the consuming
+>   `Task` stops scheduling new cells; in-flight cells finish.
+>
+> CLI: `ccbench run --max-concurrent <N> --stream`.
 
 **Current behavior.** `BenchEvent.stepCompleted` (`Sources/CCBenchKit/API/CCBench.swift:48`)
 fires *after* a step (agent session or judge call) completes; there is no intra-session,
